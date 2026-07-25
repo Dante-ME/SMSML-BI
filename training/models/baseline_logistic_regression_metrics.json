@@ -1,0 +1,27 @@
+{
+  "run_id": "f5be074029fc455f979f53e4af3d8627",
+  "model_type": "LogisticRegression",
+  "stage": "baseline",
+  "params": {
+    "penalty": "l2",
+    "C": 1.0,
+    "solver": "lbfgs",
+    "max_iter": 1000,
+    "class_weight": "balanced",
+    "random_state": 42
+  },
+  "cv_roc_auc_mean": 0.8790743371212122,
+  "cv_roc_auc_std": 0.025534810485645296,
+  "train_accuracy": 0.8284518828451883,
+  "train_precision": 0.6956521739130435,
+  "train_recall": 0.8311688311688312,
+  "train_f1": 0.757396449704142,
+  "train_roc_auc": 0.907327240660574,
+  "train_average_precision": 0.8159805257096946,
+  "test_accuracy": 0.8,
+  "test_precision": 0.7333333333333333,
+  "test_recall": 0.5789473684210527,
+  "test_f1": 0.6470588235294118,
+  "test_roc_auc": 0.8575096277278563,
+  "test_average_precision": 0.7476467103807594
+}

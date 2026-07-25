@@ -1,0 +1,29 @@
+{
+  "run_id": "83334bc86c9444f2ae30f72573ae3cc9",
+  "model_type": "RandomForestClassifier",
+  "stage": "tuning",
+  "search": "RandomizedSearchCV",
+  "n_iter": 50,
+  "scoring": "roc_auc",
+  "best_params": {
+    "class_weight": null,
+    "max_depth": 20,
+    "max_features": "sqrt",
+    "min_samples_leaf": 4,
+    "min_samples_split": 9,
+    "n_estimators": 234
+  },
+  "cv_best_roc_auc": 0.920256470959596,
+  "train_accuracy": 0.9288702928870293,
+  "train_precision": 0.9166666666666666,
+  "train_recall": 0.8571428571428571,
+  "train_f1": 0.8859060402684564,
+  "train_roc_auc": 0.9874138207471541,
+  "train_average_precision": 0.9749222943966357,
+  "test_accuracy": 0.8333333333333334,
+  "test_precision": 0.8461538461538461,
+  "test_recall": 0.5789473684210527,
+  "test_f1": 0.6875,
+  "test_roc_auc": 0.8973042362002568,
+  "test_average_precision": 0.8085854358015021
+}

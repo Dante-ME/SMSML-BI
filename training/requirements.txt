@@ -1,0 +1,16 @@
+# Dependencies for the training stage (training/modelling.py, training/modelling_tuning.py).
+# Install with:  pip install -r training/requirements.txt
+# Versions below are the ones this stage was developed and verified against.
+
+# --- experiment tracking ---
+mlflow==3.14.0        # >=3.0 requires a database backend; setup_mlflow() uses SQLite
+
+# --- model pipeline ---
+scikit-learn==1.7.2
+pandas==2.3.3
+numpy==2.2.6
+scipy==1.15.3         # randint / uniform / loguniform for RandomizedSearchCV
+joblib==1.5.3
+
+# --- evaluation plots (confusion matrix, ROC curve) ---
+matplotlib==3.10.9
