@@ -1,0 +1,206 @@
+# Main CI pipeline: rebuild the dataset from the raw file, train the baseline
+# model, verify the outputs exist and publish everything as build artifacts.
+#
+# Kept deliberately fast so it can run on every push and pull request.
+# Hyperparameter tuning is heavier and lives in its own workflow (ml-tuning.yml).
+
+name: ML CI Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Allows running the pipeline by hand from the Actions tab.
+  workflow_dispatch:
+
+# Read-only token: this workflow never writes back to the repository.
+permissions:
+  contents: read
+
+# A new push to the same branch cancels the run that is already in flight.
+concurrency:
+  group: ml-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    # Every `run` block below is bash, on every runner OS.
+    shell: bash
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  train:
+    name: Preprocess and train baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      # --- 1. Source and environment ------------------------------------- #
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          # Caches the pip download directory, keyed on the requirements files
+          # below, so later runs skip re-downloading the wheels.
+          cache: pip
+          cache-dependency-path: |
+            experiment/requirements.txt
+            training/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          # Both stages declare their own pinned environment; install both so CI
+          # tests exactly what the project says it needs.
+          pip install -r experiment/requirements.txt -r training/requirements.txt
+
+      - name: Show environment
+        run: |
+          set -euo pipefail
+          python --version
+          pip list
+
+      # --- 2. Experiment stage ------------------------------------------- #
+      # Any non-zero exit here fails the job immediately; GitHub Actions stops
+      # at the first failing step and the remaining steps are skipped.
+
+      - name: Run preprocessing pipeline (experiment/automate.py)
+        run: python experiment/automate.py
+
+      - name: Verify the processed dataset was produced
+        run: |
+          set -euo pipefail
+          missing=0
+          for file in \
+            data/processed/train.csv \
+            data/processed/test.csv \
+            data/processed/heart_failure_preprocessed.csv \
+            data/processed/metadata.json
+          do
+            if [[ -s "$file" ]]; then
+              echo "  OK      $file ($(wc -c < "$file") bytes)"
+            else
+              echo "  MISSING $file"
+              missing=1
+            fi
+          done
+          if [[ "$missing" -ne 0 ]]; then
+            echo "::error::Preprocessing did not produce the expected files in data/processed/."
+            exit 1
+          fi
+
+      # --- 3. Training stage --------------------------------------------- #
+
+      - name: Train baseline model (training/modelling.py)
+        run: python training/modelling.py
+
+      - name: Verify the trained model and reports exist
+        run: |
+          set -euo pipefail
+          missing=0
+          for file in \
+            training/models/baseline_logistic_regression.joblib \
+            training/models/baseline_logistic_regression_metrics.json \
+            training/reports/baseline_logistic_regression_confusion_matrix.png \
+            training/reports/baseline_logistic_regression_roc_curve.png \
+            training/reports/baseline_logistic_regression_classification_report.txt
+          do
+            if [[ -s "$file" ]]; then
+              echo "  OK      $file ($(wc -c < "$file") bytes)"
+            else
+              echo "  MISSING $file"
+              missing=1
+            fi
+          done
+          if [[ "$missing" -ne 0 ]]; then
+            echo "::error::Training finished but the expected model or reports are missing."
+            exit 1
+          fi
+
+      - name: Check the MLflow run was recorded
+        run: |
+          set -euo pipefail
+          if [[ -s mlruns/mlflow.db ]]; then
+            echo "  OK      mlruns/mlflow.db ($(wc -c < mlruns/mlflow.db) bytes)"
+          else
+            echo "::error::No MLflow tracking database was created in mlruns/."
+            exit 1
+          fi
+
+      # --- 4. Report ------------------------------------------------------ #
+
+      - name: Publish metrics to the job summary
+        run: |
+          set -euo pipefail
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+
+          summary = json.loads(
+              Path("training/models/baseline_logistic_regression_metrics.json").read_text()
+          )
+
+          print("## Baseline training results\n")
+          print(f"- **Model:** `{summary['model_type']}`")
+          print(f"- **MLflow run id:** `{summary['run_id']}`")
+          cv_mean, cv_std = summary["cv_roc_auc_mean"], summary["cv_roc_auc_std"]
+          print(f"- **Cross-validated ROC-AUC:** {cv_mean:.4f} (+/- {cv_std:.4f})\n")
+
+          print("| Metric | Train | Test |")
+          print("|---|---|---|")
+          for name in ["accuracy", "precision", "recall", "f1", "roc_auc", "average_precision"]:
+              train = summary.get(f"train_{name}")
+              test = summary.get(f"test_{name}")
+              if train is not None and test is not None:
+                  print(f"| {name} | {train:.4f} | {test:.4f} |")
+          PY
+
+      # --- 5. Artifacts ---------------------------------------------------- #
+      # `if: always()` keeps the uploads running even when an earlier step
+      # failed, so a broken run can still be inspected from the Actions tab.
+
+      - name: Upload trained model and metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: baseline-model-${{ github.run_number }}
+          path: |
+            training/models/*.joblib
+            training/models/*_metrics.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload evaluation reports (confusion matrix, ROC curve, report)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluation-reports-${{ github.run_number }}
+          path: training/reports/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload processed dataset
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: processed-dataset-${{ github.run_number }}
+          path: data/processed/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload MLflow tracking store
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mlruns-${{ github.run_number }}
+          path: mlruns/
+          if-no-files-found: warn
+          retention-days: 14

@@ -1,0 +1,209 @@
+# Dedicated hyperparameter-tuning pipeline.
+#
+# Kept separate from ml-ci.yml on purpose: a RandomizedSearchCV over 50
+# candidates x 5 folds takes minutes on a 2-core runner, which is too slow to
+# put in front of every pull request. This workflow is manual, parameterised,
+# and produces the tuned model plus a fair comparison against the baseline.
+
+name: ML Hyperparameter Tuning
+
+on:
+  # Manual only — run it from the Actions tab when you want a new tuned model.
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Model family to tune"
+        type: choice
+        required: true
+        default: random_forest
+        options:
+          - random_forest
+          - gradient_boosting
+          - logistic_regression
+      n_iter:
+        description: "Number of RandomizedSearchCV candidates"
+        type: string
+        required: true
+        default: "50"
+      cv_folds:
+        description: "Stratified cross-validation folds"
+        type: string
+        required: true
+        default: "5"
+      scoring:
+        description: "Metric optimised during the search (any scikit-learn scorer)"
+        type: string
+        required: true
+        default: roc_auc
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ml-tuning-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  tune:
+    name: Tune ${{ inputs.model }} (${{ inputs.n_iter }} candidates)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      # --- 1. Source and environment ------------------------------------- #
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            experiment/requirements.txt
+            training/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r experiment/requirements.txt -r training/requirements.txt
+
+      - name: Validate inputs
+        run: |
+          set -euo pipefail
+          # argparse would reject these too, but failing here gives a clearer
+          # message than a traceback several minutes into the run.
+          if ! [[ "${{ inputs.n_iter }}" =~ ^[0-9]+$ ]] || [[ "${{ inputs.n_iter }}" -lt 1 ]]; then
+            echo "::error::n_iter must be a positive integer, got '${{ inputs.n_iter }}'."
+            exit 1
+          fi
+          if ! [[ "${{ inputs.cv_folds }}" =~ ^[0-9]+$ ]] || [[ "${{ inputs.cv_folds }}" -lt 2 ]]; then
+            echo "::error::cv_folds must be an integer >= 2, got '${{ inputs.cv_folds }}'."
+            exit 1
+          fi
+          echo "model=${{ inputs.model }} n_iter=${{ inputs.n_iter }} cv_folds=${{ inputs.cv_folds }} scoring=${{ inputs.scoring }}"
+
+      # --- 2. Rebuild the inputs the tuning run depends on ---------------- #
+
+      - name: Run preprocessing pipeline (experiment/automate.py)
+        run: python experiment/automate.py
+
+      - name: Train baseline for comparison (training/modelling.py)
+        # The tuning script reads the baseline metrics file to build the
+        # baseline-vs-tuned table. Without it the comparison is skipped.
+        run: python training/modelling.py
+
+      # --- 3. Tuning ------------------------------------------------------ #
+
+      - name: Run hyperparameter tuning (training/modelling_tuning.py)
+        run: |
+          python training/modelling_tuning.py \
+            --model "${{ inputs.model }}" \
+            --n-iter "${{ inputs.n_iter }}" \
+            --cv-folds "${{ inputs.cv_folds }}" \
+            --scoring "${{ inputs.scoring }}"
+
+      - name: Verify the tuned model and artifacts exist
+        run: |
+          set -euo pipefail
+          missing=0
+          for file in \
+            "training/models/tuned_${{ inputs.model }}.joblib" \
+            "training/models/tuned_${{ inputs.model }}_metrics.json" \
+            "training/models/best_model.joblib" \
+            "training/reports/tuned_${{ inputs.model }}_cv_results.csv" \
+            "training/reports/tuned_${{ inputs.model }}_best_params.json" \
+            "training/reports/tuned_${{ inputs.model }}_confusion_matrix.png" \
+            "training/reports/tuned_${{ inputs.model }}_roc_curve.png"
+          do
+            if [[ -s "$file" ]]; then
+              echo "  OK      $file ($(wc -c < "$file") bytes)"
+            else
+              echo "  MISSING $file"
+              missing=1
+            fi
+          done
+          if [[ "$missing" -ne 0 ]]; then
+            echo "::error::Tuning finished but the expected model or artifacts are missing."
+            exit 1
+          fi
+
+      # --- 4. Report ------------------------------------------------------ #
+
+      - name: Publish tuning results to the job summary
+        run: |
+          set -euo pipefail
+          MODEL="${{ inputs.model }}" python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import csv
+          import json
+          import os
+          from pathlib import Path
+
+          model = os.environ["MODEL"]
+          summary = json.loads(Path(f"training/models/tuned_{model}_metrics.json").read_text())
+
+          print(f"## Tuning results - {summary['model_type']}\n")
+          print(f"- **Search:** {summary['search']} over {summary['n_iter']} candidates")
+          print(f"- **Optimised metric:** `{summary['scoring']}`")
+          print(f"- **MLflow run id:** `{summary['run_id']}`\n")
+
+          print("### Best hyperparameters\n")
+          print("| Parameter | Value |")
+          print("|---|---|")
+          for key, value in sorted(summary["best_params"].items()):
+              print(f"| {key} | `{value}` |")
+
+          comparison = Path("training/reports/baseline_vs_tuned.csv")
+          if comparison.is_file():
+              print("\n### Baseline vs tuned (held-out test set)\n")
+              print("| Metric | Baseline | Tuned | Delta |")
+              print("|---|---|---|---|")
+              with comparison.open(newline="", encoding="utf-8") as handle:
+                  for row in csv.DictReader(handle):
+                      delta = float(row["delta"])
+                      mark = "improved" if delta > 0 else ("same" if delta == 0 else "worse")
+                      print(
+                          f"| {row['metric']} | {row['baseline']} | {row['tuned']} "
+                          f"| {delta:+.4f} ({mark}) |"
+                      )
+          PY
+
+      # --- 5. Artifacts ---------------------------------------------------- #
+
+      - name: Upload tuned model and metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tuned-model-${{ inputs.model }}-${{ github.run_number }}
+          path: |
+            training/models/*.joblib
+            training/models/*_metrics.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload tuning reports (CV results, plots, comparison)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tuning-reports-${{ inputs.model }}-${{ github.run_number }}
+          path: training/reports/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload MLflow tracking store
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mlruns-tuning-${{ inputs.model }}-${{ github.run_number }}
+          path: mlruns/
+          if-no-files-found: warn
+          retention-days: 14
