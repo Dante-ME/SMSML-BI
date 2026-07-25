@@ -1,0 +1,23 @@
+# Dependencies for the deployment stage (deployment/app.py).
+# Install with:  pip install -r deployment/requirements.txt
+# Versions below are the ones this stage was developed and verified against.
+
+# --- API ---
+fastapi==0.140.0
+uvicorn==0.51.0
+pydantic==2.13.4
+
+# --- monitoring ---
+prometheus-client==0.26.0
+
+# --- loading the model and the fitted preprocessor ---
+# These must match the training environment: unpickling a scikit-learn estimator
+# built with a different minor version can fail or silently misbehave.
+scikit-learn==1.7.2
+pandas==2.3.3
+numpy==2.2.6
+scipy==1.15.3
+joblib==1.5.3
+
+# --- used only by smoke_test.py ---
+httpx==0.28.1

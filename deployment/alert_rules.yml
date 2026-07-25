@@ -1,0 +1,86 @@
+# Alert rules for the Heart Failure Prediction API.
+#
+# Loaded by prometheus.yml via `rule_files`. They evaluate without Alertmanager;
+# firing alerts appear under the Alerts tab at http://localhost:9090/alerts.
+#
+# Check the syntax before starting Prometheus:
+#     promtool check rules alert_rules.yml
+
+groups:
+  - name: heart-failure-api
+    rules:
+      # --- Availability --------------------------------------------------- #
+
+      - alert: APIDown
+        # `up` is written by Prometheus itself for every scrape target.
+        expr: up{job="heart-failure-api"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Heart failure API is unreachable"
+          description: "Prometheus has failed to scrape {{ $labels.instance }} for over 30s."
+
+      - alert: ModelNotLoaded
+        expr: heart_failure_model_loaded == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "API is running without a model"
+          description: >-
+            The service is up but cannot serve predictions. The model or the
+            preprocessor is probably missing; check GET /health.
+
+      # --- Errors --------------------------------------------------------- #
+
+      - alert: HighPredictionFailureRate
+        # More than 10% of prediction requests failing over the last 5 minutes.
+        expr: >-
+          sum(rate(heart_failure_prediction_requests_total{status="failure"}[5m]))
+          /
+          clamp_min(sum(rate(heart_failure_prediction_requests_total[5m])), 0.001)
+          > 0.1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Over 10% of predictions are failing"
+          description: "Failure ratio is {{ $value | humanizePercentage }} over the last 5 minutes."
+
+      - alert: PredictionErrors
+        # Any inference error at all is worth knowing about on a local demo.
+        expr: increase(heart_failure_prediction_failures_total{reason="inference_error"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Inference errors detected"
+          description: "{{ $value }} inference error(s) in the last 5 minutes."
+
+      # --- Latency -------------------------------------------------------- #
+
+      - alert: HighPredictionLatency
+        # 95th percentile above 500ms — very slow for a model this size.
+        expr: >-
+          histogram_quantile(
+            0.95,
+            sum(rate(heart_failure_prediction_latency_seconds_bucket[5m])) by (le)
+          ) > 0.5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 prediction latency above 500ms"
+          description: "p95 latency is {{ $value }}s over the last 5 minutes."
+
+      # --- Behaviour ------------------------------------------------------ #
+
+      - alert: ServiceRecentlyRestarted
+        expr: heart_failure_app_uptime_seconds < 60
+        for: 0s
+        labels:
+          severity: info
+        annotations:
+          summary: "API restarted"
+          description: "The service has been up for only {{ $value }}s."

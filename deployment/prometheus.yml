@@ -1,0 +1,44 @@
+# Prometheus configuration for the Heart Failure Prediction API.
+#
+# Start Prometheus from the deployment/ folder so the relative rule path below
+# resolves:
+#     prometheus --config.file=prometheus.yml
+#
+# Then open http://localhost:9090 and check Status -> Targets.
+
+global:
+  # How often to pull /metrics. 5s is fine for a local demo; production would
+  # normally use 15-60s.
+  scrape_interval: 5s
+  evaluation_interval: 5s
+  external_labels:
+    monitor: heart-failure-monitor
+
+# Alert rules live in their own file to keep this one readable.
+rule_files:
+  - alert_rules.yml
+
+scrape_configs:
+  # --- The FastAPI service ------------------------------------------------ #
+  - job_name: heart-failure-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["localhost:8000"]
+        labels:
+          service: heart-failure-api
+          env: local
+
+  # --- Prometheus scraping itself ----------------------------------------- #
+  # Handy as a sanity check: if this target is up but the API one is not, the
+  # problem is the API rather than Prometheus.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+# Alertmanager is optional for this project: alert rules still evaluate and are
+# visible under the Alerts tab in the Prometheus UI without it. Uncomment to
+# route firing alerts to a running Alertmanager.
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets: ["localhost:9093"]
