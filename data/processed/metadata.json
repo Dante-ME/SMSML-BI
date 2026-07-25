@@ -1,0 +1,42 @@
+{
+  "target": "death_event",
+  "task": "classification",
+  "random_state": 42,
+  "test_size": 0.2,
+  "n_rows_raw": 299,
+  "n_rows_train": 239,
+  "n_rows_test": 60,
+  "feature_groups": {
+    "continuous": [
+      "age",
+      "creatinine_phosphokinase",
+      "ejection_fraction",
+      "platelets",
+      "serum_creatinine",
+      "serum_sodium",
+      "time"
+    ],
+    "binary": [
+      "anaemia",
+      "diabetes",
+      "high_blood_pressure",
+      "sex",
+      "smoking"
+    ],
+    "categorical": []
+  },
+  "output_features": [
+    "age",
+    "creatinine_phosphokinase",
+    "ejection_fraction",
+    "platelets",
+    "serum_creatinine",
+    "serum_sodium",
+    "time",
+    "anaemia",
+    "diabetes",
+    "high_blood_pressure",
+    "sex",
+    "smoking"
+  ]
+}

@@ -7,4 +7,5 @@ mlruns/
 *.joblib
 .env
 .vscode/
+.claude
 "@ | Set-Content .gitignore

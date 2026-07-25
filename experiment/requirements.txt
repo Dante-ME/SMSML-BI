@@ -1,0 +1,16 @@
+# Dependencies for the experiment stage (experiment/automate.py + notebooks/Eksperimen.ipynb).
+# Install with:  pip install -r experiment/requirements.txt
+# Versions below are the ones this stage was developed and verified against.
+
+# --- core preprocessing pipeline (required by automate.py) ---
+pandas==2.3.3
+numpy==2.2.6
+scikit-learn==1.7.2   # >=1.2 needed for OneHotEncoder(sparse_output=...)
+joblib==1.5.3
+
+# --- notebook + EDA plots only (not needed to run automate.py) ---
+matplotlib==3.10.9
+seaborn==0.13.2
+jupyter==1.1.1
+ipykernel==7.3.0
+nbformat==5.10.4
