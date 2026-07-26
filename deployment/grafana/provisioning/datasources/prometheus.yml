@@ -1,0 +1,27 @@
+# Grafana datasource provisioning.
+#
+# Loaded automatically at Grafana startup when GF_PATHS_PROVISIONING points at
+# deployment/grafana/provisioning. Keeping it in the repo means the data source
+# is never clicked together by hand: delete Grafana's database and it comes back
+# identical.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    # Fixed uid so the dashboard JSON can reference it without editing.
+    uid: prometheus-hf
+    url: http://localhost:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      # Must match `scrape_interval` in deployment/prometheus.yml, otherwise
+      # Grafana suggests $__rate_interval values that are too small and rate()
+      # returns gaps.
+      timeInterval: 5s
+      httpMethod: POST
+      prometheusType: Prometheus
+      prometheusVersion: 3.13.1
+      manageAlerts: true

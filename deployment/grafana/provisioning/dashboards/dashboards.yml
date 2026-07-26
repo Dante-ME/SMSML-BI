@@ -1,0 +1,22 @@
+# Grafana dashboard provisioning.
+#
+# Points Grafana at deployment/grafana/dashboards/, so every dashboard JSON in
+# that folder is imported at startup and re-imported whenever the file changes.
+
+apiVersion: 1
+
+providers:
+  - name: heart-failure
+    orgId: 1
+    folder: Heart Failure API
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    # Edits made in the UI are overwritten by the file on the next reload; the
+    # file stays the source of truth.
+    allowUiUpdates: false
+    options:
+      # Set by the launcher (start_monitoring.ps1) to deployment/grafana/dashboards
+      # so this file stays portable across machines.
+      path: $DASHBOARDS_PATH
+      foldersFromFilesStructure: false

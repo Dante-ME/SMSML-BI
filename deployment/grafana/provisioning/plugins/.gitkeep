@@ -1,0 +1,6 @@
+# Intentionally empty.
+#
+# This project provisions no plugins, but Grafana logs an ERROR at startup for
+# every provisioning subdirectory that does not exist. Keeping the folder (and
+# therefore this placeholder, since git does not track empty directories) keeps
+# the startup log clean.

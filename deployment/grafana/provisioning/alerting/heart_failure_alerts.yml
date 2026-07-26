@@ -1,0 +1,105 @@
+# Grafana-managed alert rules (unified alerting).
+#
+# These are deliberately NOT a copy of deployment/alert_rules.yml. Those six
+# rules are evaluated by Prometheus itself and are visible at
+# http://localhost:9090/alerts. The two below are evaluated by Grafana, so they
+# show up under Alerting -> Alert rules in the Grafana UI and can be routed to a
+# contact point (Slack, email, ...) without running an Alertmanager.
+#
+# Keep the duplication small and intentional: only the signals someone would
+# actually want a notification for.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: heart-failure-serving
+    folder: Heart Failure API
+    interval: 1m
+    rules:
+      - uid: hf-api-unreachable
+        title: Heart Failure API unreachable
+        condition: THRESHOLD
+        for: 1m
+        # No data means Prometheus stopped producing `up` for this job at all,
+        # which is at least as bad as up == 0.
+        noDataState: Alerting
+        execErrState: Error
+        labels:
+          severity: critical
+          service: heart-failure-api
+        annotations:
+          summary: Prometheus cannot scrape the FastAPI service
+          description: >-
+            up{job="heart-failure-api"} has been 0 for more than a minute. The
+            uvicorn process is probably not running on port 8000.
+        data:
+          - refId: QUERY
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus-hf
+            model:
+              refId: QUERY
+              editorMode: code
+              expr: up{job="heart-failure-api"}
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: THRESHOLD
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              refId: THRESHOLD
+              type: threshold
+              expression: QUERY
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+
+      - uid: hf-prediction-latency
+        title: Prediction p95 latency above 500ms
+        condition: THRESHOLD
+        for: 2m
+        # Silence rather than page when nobody is calling /predict: an empty
+        # histogram is not a latency problem.
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          service: heart-failure-api
+        annotations:
+          summary: The model is answering slowly
+          description: >-
+            p95 end-to-end prediction latency has been above 500ms for two
+            minutes. Check batch sizes on /predict before blaming the model.
+        data:
+          - refId: QUERY
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus-hf
+            model:
+              refId: QUERY
+              editorMode: code
+              expr: >-
+                histogram_quantile(0.95, sum(rate(heart_failure_prediction_latency_seconds_bucket[5m])) by (le))
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: THRESHOLD
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              refId: THRESHOLD
+              type: threshold
+              expression: QUERY
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.5]

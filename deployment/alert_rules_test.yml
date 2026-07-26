@@ -1,0 +1,137 @@
+# Unit tests for deployment/alert_rules.yml.
+#
+# Runs entirely offline against synthetic series — no Prometheus server, no API,
+# no network. This is how you find out that an alert never fires *before* the
+# incident it was written for:
+#
+#     promtool test rules alert_rules_test.yml
+#
+# Run it from the deployment/ folder so the relative rule_files path below
+# resolves. Exits non-zero on failure, so it can be added to CI later.
+
+rule_files:
+  - alert_rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ------------------------------------------------------------------------ #
+  # 1. A healthy service must be silent.
+  #
+  #    The test that actually earns its keep: an alert that fires during normal
+  #    operation gets muted by whoever is on call, and then it is not an alert.
+  # ------------------------------------------------------------------------ #
+  - interval: 1m
+    input_series:
+      - series: 'up{job="heart-failure-api", instance="localhost:8000"}'
+        values: "1+0x10"
+      - series: 'heart_failure_model_loaded{job="heart-failure-api", instance="localhost:8000"}'
+        values: "1+0x10"
+      # Started well over a minute ago.
+      - series: 'heart_failure_app_uptime_seconds{job="heart-failure-api", instance="localhost:8000"}'
+        values: "600+60x10"
+      # Steady traffic, every request succeeding.
+      - series: 'heart_failure_prediction_requests_total{job="heart-failure-api", instance="localhost:8000", status="success"}'
+        values: "0+10x10"
+      # Every observation lands in the 5ms bucket, so p95 is far below 500ms.
+      - series: 'heart_failure_prediction_latency_seconds_bucket{job="heart-failure-api", instance="localhost:8000", le="0.005"}'
+        values: "0+10x10"
+      - series: 'heart_failure_prediction_latency_seconds_bucket{job="heart-failure-api", instance="localhost:8000", le="+Inf"}'
+        values: "0+10x10"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: APIDown
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: ModelNotLoaded
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: HighPredictionFailureRate
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: PredictionErrors
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: HighPredictionLatency
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: ServiceRecentlyRestarted
+        exp_alerts: []
+
+  # ------------------------------------------------------------------------ #
+  # 2. The scrape fails -> APIDown fires after `for: 30s`.
+  # ------------------------------------------------------------------------ #
+  - interval: 1m
+    input_series:
+      - series: 'up{job="heart-failure-api", instance="localhost:8000"}'
+        values: "1 1 1 0 0 0 0"
+    alert_rule_test:
+      # Still pending one evaluation in: `for: 30s` has not elapsed yet.
+      - eval_time: 3m
+        alertname: APIDown
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: APIDown
+        exp_alerts:
+          - exp_labels:
+              alertname: APIDown
+              job: heart-failure-api
+              instance: localhost:8000
+              severity: critical
+            exp_annotations:
+              summary: "Heart failure API is unreachable"
+              description: "Prometheus has failed to scrape localhost:8000 for over 30s."
+
+  # ------------------------------------------------------------------------ #
+  # 3. The process is up but the model never loaded -> ModelNotLoaded fires.
+  #
+  #    This is the failure mode app.py deliberately allows: it starts anyway so
+  #    /health can explain itself, which means `up == 1` is not enough to know
+  #    the service can serve predictions.
+  # ------------------------------------------------------------------------ #
+  - interval: 1m
+    input_series:
+      - series: 'up{job="heart-failure-api", instance="localhost:8000"}'
+        values: "1+0x8"
+      - series: 'heart_failure_model_loaded{job="heart-failure-api", instance="localhost:8000"}'
+        values: "0+0x8"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: ModelNotLoaded
+        exp_alerts:
+          - exp_labels:
+              alertname: ModelNotLoaded
+              job: heart-failure-api
+              instance: localhost:8000
+              severity: critical
+            exp_annotations:
+              summary: "API is running without a model"
+              description: "The service is up but cannot serve predictions. The model or the preprocessor is probably missing; check GET /health."
+      # The availability alert must stay quiet: the scrape itself is fine.
+      - eval_time: 5m
+        alertname: APIDown
+        exp_alerts: []
+
+  # ------------------------------------------------------------------------ #
+  # 4. A fresh restart -> ServiceRecentlyRestarted fires immediately (for: 0s).
+  # ------------------------------------------------------------------------ #
+  - interval: 1m
+    input_series:
+      - series: 'heart_failure_app_uptime_seconds{job="heart-failure-api", instance="localhost:8000"}'
+        values: "30 90 150"
+    alert_rule_test:
+      - eval_time: 0m
+        alertname: ServiceRecentlyRestarted
+        exp_alerts:
+          - exp_labels:
+              alertname: ServiceRecentlyRestarted
+              job: heart-failure-api
+              instance: localhost:8000
+              severity: info
+            exp_annotations:
+              summary: "API restarted"
+              description: "The service has been up for only 30s."
+      # A minute later the service is no longer "recently" restarted.
+      - eval_time: 2m
+        alertname: ServiceRecentlyRestarted
+        exp_alerts: []
